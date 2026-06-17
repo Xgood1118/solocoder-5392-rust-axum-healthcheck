@@ -1,0 +1,54 @@
+[server]
+host = "127.0.0.1"
+port = 8192
+
+[alert]
+webhooks = [
+    { url = "http://127.0.0.1:8193/critical", level = "critical" },
+    { url = "http://127.0.0.1:8193/warn", level = "warn" },
+]
+
+[[service]]
+name = "http-svc"
+url = "http://127.0.0.1:9991"
+check_type = "http"
+check_path = "/health"
+interval_secs = 1
+timeout_secs = 2
+unhealthy_threshold = 2
+degraded_threshold = 1
+healthy_threshold = 2
+alert_after_secs = 1
+dependencies = ["tcp-svc"]
+
+[[service]]
+name = "tcp-svc"
+url = "127.0.0.1:9992"
+check_type = "tcp"
+interval_secs = 1
+timeout_secs = 2
+unhealthy_threshold = 2
+degraded_threshold = 1
+healthy_threshold = 2
+alert_after_secs = 1
+
+[[service]]
+name = "passive-svc"
+url = "ignored"
+check_type = "http"
+passive = true
+heartbeat_timeout_secs = 3
+alert_after_secs = 1
+
+[[service]]
+name = "cmd-svc"
+url = "ignored"
+check_type = "command"
+command = "cmd.exe"
+command_args = ["/c", "exit", "0"]
+interval_secs = 2
+timeout_secs = 3
+unhealthy_threshold = 2
+degraded_threshold = 1
+healthy_threshold = 2
+alert_after_secs = 1

@@ -66,6 +66,21 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
                 });
+            } else {
+                let tx = check_tx_clone.clone();
+                let name = svc_cfg.name.clone();
+                let interval = svc_cfg.heartbeat_timeout_secs.max(1);
+
+                tokio::spawn(async move {
+                    let mut interval =
+                        tokio::time::interval(tokio::time::Duration::from_secs(interval));
+                    loop {
+                        interval.tick().await;
+                        if tx.send(name.clone()).await.is_err() {
+                            break;
+                        }
+                    }
+                });
             }
         }
     });
@@ -165,6 +180,7 @@ async fn main() -> anyhow::Result<()> {
         state: shared_state.clone(),
         dependency_graph: dependency_graph.clone(),
         check_tx: check_tx.clone(),
+        alert_manager: alert_manager.clone(),
     };
 
     let app = Router::new()

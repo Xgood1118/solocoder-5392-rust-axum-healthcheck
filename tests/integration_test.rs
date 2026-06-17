@@ -1,3 +1,5 @@
+use healthcheck_service::alert::AlertManager;
+use healthcheck_service::config::AlertConfig;
 use healthcheck_service::dependency::DependencyGraph;
 use healthcheck_service::handlers::AppStateForHandlers;
 use healthcheck_service::models::{CheckType, ServiceConfig, ServiceStatus};
@@ -68,10 +70,15 @@ async fn setup_test_app() -> (Router, mpsc::Receiver<String>) {
 
     let (check_tx, check_rx) = mpsc::channel::<String>(100);
 
+    let alert_manager = Arc::new(tokio::sync::Mutex::new(AlertManager::new(AlertConfig {
+        webhooks: vec![],
+    })));
+
     let handler_state = AppStateForHandlers {
         state: shared_state.clone(),
         dependency_graph: dependency_graph.clone(),
         check_tx,
+        alert_manager,
     };
 
     let app = Router::new()

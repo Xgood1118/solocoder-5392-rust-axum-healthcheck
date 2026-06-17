@@ -5,7 +5,9 @@ use axum::{
     Json,
 };
 use serde_json::json;
+use std::sync::Arc;
 
+use crate::alert::AlertManager;
 use crate::dependency::DependencyGraph;
 use crate::models::HeartbeatRequest;
 use crate::state::SharedState;
@@ -13,8 +15,9 @@ use crate::state::SharedState;
 #[derive(Clone)]
 pub struct AppStateForHandlers {
     pub state: SharedState,
-    pub dependency_graph: std::sync::Arc<tokio::sync::RwLock<DependencyGraph>>,
+    pub dependency_graph: Arc<tokio::sync::RwLock<DependencyGraph>>,
     pub check_tx: tokio::sync::mpsc::Sender<String>,
+    pub alert_manager: Arc<tokio::sync::Mutex<AlertManager>>,
 }
 
 pub fn problem(status: StatusCode, title: &str, detail: &str) -> impl IntoResponse {
@@ -127,9 +130,7 @@ pub async fn heartbeat(
     State(app_state): State<AppStateForHandlers>,
     Json(req): Json<HeartbeatRequest>,
 ) -> impl IntoResponse {
-    let mut state = app_state.state.write().await;
-
-    if !state.services.contains_key(&req.name) {
+    if !app_state.state.read().await.services.contains_key(&req.name) {
         return problem(
             StatusCode::NOT_FOUND,
             "Not Found",
@@ -138,7 +139,22 @@ pub async fn heartbeat(
         .into_response();
     }
 
+    let mut state = app_state.state.write().await;
     let status_change = state.record_heartbeat(&req.name);
+
+    if let Some(new_status) = status_change {
+        let mut graph = app_state.dependency_graph.write().await;
+        graph.update_status(&req.name, new_status);
+
+        if let Some(svc_state) = state.services.get(&req.name) {
+            if let Some(config) = state.configs.get(&req.name) {
+                let mut alert = app_state.alert_manager.lock().await;
+                alert
+                    .check_and_send_alerts(&req.name, svc_state, config.alert_after_secs)
+                    .await;
+            }
+        }
+    }
 
     let message = match status_change {
         Some(new_status) => format!("心跳已接收，状态更新为 {}", new_status),
