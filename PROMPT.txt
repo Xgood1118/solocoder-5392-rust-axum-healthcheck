@@ -1,0 +1,48 @@
+我司线上服务越来越多，监控告警一直是个痛点。第三方监控工具贵不说还定制困难，想自己撸一个简化版的健康检查服务，专门负责盯一堆下游服务的存活状态。技术栈用 Rust + Axum，性能好内存省，部署成一个小镜像跑在 K8s 里。
+
+整体功能是这样的：服务启动的时候从配置文件读一堆下游服务的列表，每个下游服务配置它的名字、URL、健康检查路径、检查间隔、超时时间。健康检查服务按照每个服务自己的间隔去 ping 它，ping 的方式支持 HTTP GET、TCP 端口探测、还有执行命令返回退出码这三种。每个被检查的服务都有状态：健康、亚健康、不可用。
+
+状态机的逻辑要细说。初始状态是 unknown，第一次检查之后根据结果转成健康或不可用。健康状态下连续 N 次（M 次这种可配置）检查失败就降级到亚健康，连续 M 次失败再降级到不可用。亚健康状态下继续失败就保持或降到不可用，恢复成功的话回到健康。从不可用恢复要等连续几次成功才能转回亚健康，再连续几次才能转回健康，不能一次成功就转，不然会"抖动"——线上偶发抽风一下监控就乱跳。这种状态转换规则要可配置，每个服务可以单独配参数。
+
+依赖链检查这个功能比较有意思。一个服务 A 可能依赖 B，B 依赖 C。如果 A 不健康但是 B 健康 C 不健康，那大概率是 C 的问题拖累了 B 拖累了 A。这个依赖关系要在配置文件里声明，生成一个依赖图。报告页面能展示一棵依赖树，每个节点的颜色按状态染色。计算"根因"——找最深层的不健康节点，这通常就是要先处理的那个。
+
+告警阈值这块：连续 N 秒（可配置）服务状态是"不可用"就触发告警。告警通过 webhook 发出去，可以配置多个 webhook 地址（不同级别发不同地址）。告警消息要带服务名、当前状态、最后成功时间、错误信息。状态恢复的时候也要发个"已恢复"的消息，避免一直告警。
+
+聚合报告接口：GET /api/report 返回所有被监控服务的当前状态概览：总数、健康数、亚健康数、不可用数。GET /api/services/<name> 返回单个服务的详细状态：当前状态、状态历史（最近 100 次状态变化）、最近一次检查时间、最近一次错误。状态历史用 ring buffer 存内存里。
+
+主动探测和被动报告两种模式要支持。除了服务主动去 ping 下游，下游也可以主动 POST /api/heartbeat 汇报自己活着。被动模式下服务如果在 X 秒内没收到心跳就视为不可用。两种模式可以混用，有些用主动探测（比如外部 HTTP 服务）有些用被动心跳（比如同集群内部的服务）。
+
+数据存储用内存就行，重启丢失可以接受。配置热加载：监控配置文件变更后自动重载（用 notify crate 监听文件变化），不重启服务。
+
+API 列表：
+- GET /api/services - 列表
+- GET /api/services/<name> - 详情
+- POST /api/services/<name>/check - 立即触发一次检查
+- GET /api/services/<name>/history - 状态历史
+- POST /api/heartbeat - 被动心跳
+- GET /api/report - 聚合报告
+- GET /api/dependencies - 依赖图
+- GET /health - 健康检查服务自己的健康状态（给 K8s 用）
+
+配置格式用 TOML，示例：
+[[service]]
+name = "user-api"
+url = "http://user-api:8080"
+check_type = "http"
+check_path = "/health"
+interval_secs = 30
+timeout_secs = 5
+unhealthy_threshold = 3
+degraded_threshold = 2
+healthy_threshold = 2
+dependencies = ["auth-service", "db"]
+
+状态变化的检测是异步的，每个服务用 tokio task 跑自己的检查循环，结果通过 channel 发回主任务更新状态。共享状态用 Arc<RwLock<HashMap<...>>> 这种。检查时使用 timeout 包装，避免某个下游卡死拖垮整个监控。
+
+代码组织：src/handlers（HTTP handler）、src/checker（执行检查逻辑）、src/state（共享状态）、src/config（配置加载和热重载）、src/alert（告警）、src/models（数据模型）、src/dependency（依赖图）。
+
+并发这块 Rust 编译期就帮保证了，但还是要小心死锁——状态更新用消息传递而不是直接持锁。
+
+错误处理用 anyhow + thiserror，HTTP 错误返回 Problem Details (RFC 7807) 格式。日志用 tracing。
+
+测试要写：状态机转换的单元测试、配置加载、HTTP handler 集成测试用 mock server 模拟下游。

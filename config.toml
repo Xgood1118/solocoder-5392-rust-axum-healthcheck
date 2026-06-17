@@ -1,0 +1,77 @@
+[server]
+host = "0.0.0.0"
+port = 38900
+
+[alert]
+webhooks = [
+    { url = "http://alertmanager:9093/webhook", level = "critical" },
+]
+
+[[service]]
+name = "user-api"
+url = "http://user-api:8080"
+check_type = "http"
+check_path = "/health"
+interval_secs = 30
+timeout_secs = 5
+unhealthy_threshold = 3
+degraded_threshold = 2
+healthy_threshold = 2
+alert_after_secs = 60
+dependencies = ["auth-service", "postgres"]
+
+[[service]]
+name = "auth-service"
+url = "http://auth-service:8080"
+check_type = "http"
+check_path = "/health"
+interval_secs = 30
+timeout_secs = 5
+unhealthy_threshold = 3
+degraded_threshold = 2
+healthy_threshold = 2
+alert_after_secs = 60
+dependencies = ["postgres", "redis"]
+
+[[service]]
+name = "postgres"
+url = "postgres:5432"
+check_type = "tcp"
+interval_secs = 30
+timeout_secs = 5
+unhealthy_threshold = 3
+degraded_threshold = 2
+healthy_threshold = 2
+alert_after_secs = 30
+
+[[service]]
+name = "redis"
+url = "redis:6379"
+check_type = "tcp"
+interval_secs = 30
+timeout_secs = 5
+unhealthy_threshold = 3
+degraded_threshold = 2
+healthy_threshold = 2
+alert_after_secs = 30
+
+[[service]]
+name = "internal-worker"
+url = "internal-worker"
+check_type = "http"
+passive = true
+heartbeat_timeout_secs = 120
+alert_after_secs = 120
+
+[[service]]
+name = "custom-script-check"
+url = "ignored"
+check_type = "command"
+command = "/usr/local/bin/custom-check.sh"
+command_args = ["--strict"]
+interval_secs = 60
+timeout_secs = 10
+unhealthy_threshold = 2
+degraded_threshold = 1
+healthy_threshold = 1
+alert_after_secs = 120

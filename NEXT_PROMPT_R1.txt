@@ -1,0 +1,1 @@
+3 bug：①被动服务永不超时——main.rs 没给 passive 服务 spawn ticker 触发 check_heartbeat_timeout。②恢复告警不发——alert 转 Unhealthy 时没加 alerting_services（要持续超阈值才加）。③心跳不更新依赖图——heartbeat handler 漏 graph.update_status。</content>
